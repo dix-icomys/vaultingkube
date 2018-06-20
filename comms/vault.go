@@ -24,9 +24,8 @@ type VKVaultMounts []VKVaultMount
 // VKVaultMount is a representation of a mount we care about
 type VKVaultMount struct {
 	MountPath    string
+	KeysPath     string
 	MountPointer *vault.MountOutput
-	Namespace    string
-	SecretTypes  string
 	Secrets      *VKVaultSecrets
 }
 
@@ -35,8 +34,10 @@ type VKVaultSecrets []VKVaultSecret
 
 // VKVaultSecret is a kv secret stored in vault
 type VKVaultSecret struct {
-	Name  string
-	Pairs map[string]string
+	Name       string
+	Namespace  string
+	SecretType string
+	Pairs      map[string]string
 }
 
 // NewVKVaultClient returns a new VKVault client
@@ -53,7 +54,6 @@ func NewVKVaultClient() (*VKVault, error) {
 
 // GetMounts will return a list of VKVaultMounts based on mountPath
 func (v *VKVault) GetMounts(mountPath string) (*VKVaultMounts, error) {
-	mountPath = strings.Trim(mountPath, "/")
 	mounts := new(VKVaultMounts)
 	mountMap, err := v.Client.Sys().ListMounts()
 	if err != nil {
@@ -61,25 +61,11 @@ func (v *VKVault) GetMounts(mountPath string) (*VKVaultMounts, error) {
 	}
 
 	for mount, pointer := range mountMap {
-		if strings.HasPrefix(mount, mountPath) && pointer.Type == "kv" {
-			subMount := strings.Split(mount, mountPath)[1]
-			subMount = strings.Trim(subMount, "/")
-			subMountSlice := strings.Split(subMount, "/")
-			if len(subMountSlice) != 2 {
-				ErrInvalidVaultMount = fmt.Errorf("Mount %s is invalid", mount)
-				return nil, ErrInvalidVaultMount
-			}
-			namespace := subMountSlice[0]
-			secretTypes := subMountSlice[1]
-			if secretTypes != "configmaps" && secretTypes != "secrets" {
-				ErrInvalidSecretType = fmt.Errorf("Secret %s is invalid", secretTypes)
-				return nil, ErrInvalidSecretType
-			}
+		if strings.HasPrefix(strings.Trim(mountPath, "/"), mount) && pointer.Type == "kv" {
 			vaultMount := &VKVaultMount{
 				MountPath:    mount,
+				KeysPath:     mountPath,
 				MountPointer: pointer,
-				Namespace:    namespace,
-				SecretTypes:  secretTypes,
 			}
 			vaultMount.populateSecrets(v)
 			*mounts = append(*mounts, *vaultMount)
@@ -92,29 +78,59 @@ func (v *VKVault) GetMounts(mountPath string) (*VKVaultMounts, error) {
 // populateSecrets will return VKVaultSecrets when given a VKVaultMount
 func (m *VKVaultMount) populateSecrets(v *VKVault) (*VKVaultMount, error) {
 	returnSecrets := new(VKVaultSecrets)
-	secrets, err := v.Client.Logical().List(m.MountPath)
+	namespaces, err := v.Client.Logical().List(m.KeysPath)
 	if err != nil {
 		return nil, err
 	}
-	if secrets == nil {
+	if namespaces == nil {
 		return nil, nil
 	}
-	for _, data := range secrets.Data["keys"].([]interface{}) {
-		secretName := data.(string)
-		secretMap, err := v.Client.Logical().Read(m.MountPath + "/" + secretName)
+	// List namespaces loop
+	for _, data := range namespaces.Data["keys"].([]interface{}) {
+		namespace := strings.Trim(data.(string), "/")
+
+		secretTypes, err := v.Client.Logical().List(fmt.Sprintf("%s/%s", m.KeysPath, namespace))
 		if err != nil {
 			return nil, err
 		}
-		appendSecret := &VKVaultSecret{
-			Name:  secretName,
-			Pairs: make(map[string]string),
-		}
-		if secretMap != nil {
-			for key, value := range secretMap.Data {
-				appendSecret.Pairs[key] = value.(string)
+		// List secretsTypes loop
+		for _, data := range secretTypes.Data["keys"].([]interface{}) {
+			secretType := strings.Trim(data.(string), "/")
+
+			if !(secretType == "secrets" ||
+				secretType == "configmaps") {
+				continue
+			}
+
+			secretsTypesPath := fmt.Sprintf("%s/%s/%s", m.KeysPath, namespace, secretType)
+			secretsList, err := v.Client.Logical().List(secretsTypesPath)
+			if err != nil {
+				return nil, err
+			}
+			// List secrets loop
+			for _, data := range secretsList.Data["keys"].([]interface{}) {
+				secretName := strings.Trim(data.(string), "/")
+				secretPath := fmt.Sprintf("%s/%s", secretsTypesPath, secretName)
+
+				secretMap, err := v.Client.Logical().Read(secretPath)
+				if err != nil {
+					return nil, err
+				}
+				appendSecret := &VKVaultSecret{
+					Name:       secretName,
+					Namespace:  namespace,
+					SecretType: secretType,
+					Pairs:      make(map[string]string),
+				}
+
+				if secretMap != nil {
+					for key, value := range secretMap.Data {
+						appendSecret.Pairs[key] = value.(string)
+					}
+				}
+				*returnSecrets = append(*returnSecrets, *appendSecret)
 			}
 		}
-		*returnSecrets = append(*returnSecrets, *appendSecret)
 	}
 	m.Secrets = returnSecrets
 	return m, nil

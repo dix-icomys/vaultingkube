@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/Sirupsen/logrus"
-	"github.com/sunshinekitty/vaultingkube/comms"
+	"github.com/dix-icomys/vaultingkube/comms"
 )
 
 func main() {
@@ -28,6 +28,7 @@ func main() {
 	}
 
 	fmt.Printf("Started with sync period every %s seconds\n", syncPeriod)
+	run()
 	for range time.Tick(time.Second * time.Duration(syncPeriodInt)) {
 		run()
 	}
@@ -50,30 +51,34 @@ func run() {
 	if err != nil {
 		logger.Fatal(err)
 	} else {
-		for _, mount := range *mounts {
-			if mount.Secrets != nil {
-				for _, secret := range *mount.Secrets {
-					if vkKube.IsManaged(secret.Name, mount.SecretTypes, mount.Namespace) {
-						if mount.SecretTypes == "secrets" {
-							err := vkKube.SetSecret(secret.Name, mount.Namespace, secret.Pairs)
+		for _, vaultSecret := range *mounts {
+			if vaultSecret.Secrets != nil {
+				for _, secret := range *vaultSecret.Secrets {
+					logger.Infof("Found Secret %s", secret.Name)
+
+					if vkKube.IsManaged(secret.Name, secret.SecretType, secret.Namespace) {
+						if secret.SecretType == "secrets" {
+							logger.Infof("Found Secret %s is secrets", secret.Name)
+							err := vkKube.SetSecret(secret.Name, secret.Namespace, secret.Pairs)
 							if err != nil {
 								logger.Error(err)
 							} else {
-								logger.Infof("Set Secret for %s/%s", mount.Namespace, secret.Name)
+								logger.Infof("Set Secret for %s/%s", secret.Namespace, secret.Name)
 							}
-						} else if mount.SecretTypes == "configmaps" {
-							err := vkKube.SetCM(secret.Name, mount.Namespace, secret.Pairs)
+						} else if secret.SecretType == "configmaps" {
+							logger.Infof("Found Secret %s is configmaps", secret.Name)
+							err := vkKube.SetCM(secret.Name, secret.Namespace, secret.Pairs)
 							if err != nil {
 								logger.Error(err)
 							} else {
-								logger.Infof("Set ConfigMap for %s/%s", mount.Namespace, secret.Name)
+								logger.Infof("Set ConfigMap for %s/%s", secret.Namespace, secret.Name)
 							}
 						}
 					} else {
-						if mount.SecretTypes == "secrets" {
-							logger.Infof("Secret %s in namespace %s is not managed by VaultingKube, ignoring", secret.Name, mount.Namespace)
-						} else if mount.SecretTypes == "configmaps" {
-							logger.Infof("ConfigMap %s in namespace %s is not managed by VaultingKube, ignoring", secret.Name, mount.Namespace)
+						if secret.SecretType == "secrets" {
+							logger.Infof("Secret %s in namespace %s is not managed by VaultingKube, ignoring", secret.Name, secret.Namespace)
+						} else if secret.SecretType == "configmaps" {
+							logger.Infof("ConfigMap %s in namespace %s is not managed by VaultingKube, ignoring", secret.Name, secret.Namespace)
 						}
 					}
 				}
