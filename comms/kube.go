@@ -197,9 +197,9 @@ func (k *VKKube) DeleteOld(mounts *VKVaultMounts) error {
 			for _, mount := range *mounts {
 				if mount.Secrets != nil {
 					for _, mSecret := range *mount.Secrets {
-						if secret.Namespace == mSecret.Namespace &&
-							secret.Name == mSecret.Name &&
-							secret.SecretType == "secrets" {
+						if mSecret.Namespace == secret.Namespace &&
+							mSecret.Name == secret.Name &&
+							mSecret.SecretType == "secrets" {
 							// We found a secret
 							found = true
 						}

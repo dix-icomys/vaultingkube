@@ -1,4 +1,4 @@
-package: github.com/sunshinekitty/vaultingkube
+package: github.com/dix-icomys/vaultingkube
 import:
 - package: github.com/spf13/viper
   version: 16990631d4aa7e38f73dbbbf37fa13e67c648531
